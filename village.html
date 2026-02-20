@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tehri Villages Info Panel</title>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+
+    <style>
+        body { margin:0; font-family: Arial; }
+        #map { height: 100vh; }
+
+        /* Side Panel */
+        #infoPanel {
+            position: fixed;
+            top: 0;
+            right: -400px;
+            width: 400px;
+            height: 100%;
+            background: white;
+            box-shadow: -3px 0 10px rgba(0,0,0,0.3);
+            padding: 20px;
+            overflow-y: auto;
+            transition: right 0.4s ease;
+            z-index: 1000;
+        }
+
+        #infoPanel.active {
+            right: 0;
+        }
+
+        .closeBtn {
+            cursor: pointer;
+            color: red;
+            font-weight: bold;
+            float: right;
+        }
+
+        h2 { margin-top: 0; }
+        hr { margin: 15px 0; }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="infoPanel">
+    <span class="closeBtn" onclick="closePanel()">X</span>
+    <div id="panelContent"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<script>
+
+// ================= DATA =================
+
+const dehradun = { name:"Dehradun", lat:30.3165, lng:78.0322 };
+
+const villages = [
+    { name:"Herwal Gaon", lat:30.412, lng:78.650, population:650 },
+    { name:"Khatt", lat:30.530, lng:78.420, population:480 },
+    { name:"Dyuli", lat:30.370, lng:78.400, population:720 },
+    { name:"Bagol", lat:30.450, lng:78.600, population:510 },
+    { name:"Pali Padyar", lat:30.470, lng:78.550, population:390 },
+    { name:"Chapoli", lat:30.150, lng:78.600, population:560 },
+    { name:"Bahera", lat:30.520, lng:78.700, population:430 },
+    { name:"Thati Dagar", lat:30.220, lng:78.650, population:600 }
+];
+
+// ================= MAP =================
+
+const map = L.map('map').setView([30.4, 78.5], 9);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap'
+}).addTo(map);
+
+// ================= ROUTING FUNCTION =================
+
+async function getRoadDistance(from, to) {
+    const url = `https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=false`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.routes.length > 0) {
+        return (data.routes[0].distance / 1000).toFixed(2);
+    }
+    return "N/A";
+}
+
+// ================= PANEL CONTROL =================
+
+function openPanel(content) {
+    document.getElementById("panelContent").innerHTML = content;
+    document.getElementById("infoPanel").classList.add("active");
+}
+
+function closePanel() {
+    document.getElementById("infoPanel").classList.remove("active");
+}
+
+// ================= LOAD DATA =================
+
+async function loadVillages() {
+
+    for (let v of villages) {
+
+        const marker = L.marker([v.lat, v.lng]).addTo(map);
+
+        marker.on("click", async () => {
+
+            let content = `<h2>${v.name}</h2>
+                           <b>Location:</b> ${v.lat}, ${v.lng}<br>
+                           <b>Population:</b> ${v.population}<br><br>
+                           <b>Calculating road distances...</b>`;
+
+            openPanel(content);
+
+            // Distance from Dehradun
+            let distDehradun = await getRoadDistance(dehradun, v);
+
+            let distanceSection = `
+                <b>Distance from Dehradun:</b> ${distDehradun} km<br><br>
+                <b>Distance from Other Villages:</b><br>
+            `;
+
+            for (let other of villages) {
+                if (other.name !== v.name) {
+                    let dist = await getRoadDistance(v, other);
+                    distanceSection += `${other.name}: ${dist} km<br>`;
+                }
+            }
+
+            content = `
+                <h2>${v.name}</h2>
+                <b>Location:</b> ${v.lat}, ${v.lng}<br>
+                <b>Population:</b> ${v.population}<br><br>
+                ${distanceSection}
+                <hr>
+                <h3>Sources</h3>
+                Census of India 2011<br>
+                OpenStreetMap<br>
+                OSRM Routing API<br>
+                <a href="https://www.census2011.co.in/" target="_blank">Census Data Link</a>
+            `;
+
+            openPanel(content);
+        });
+    }
+}
+
+loadVillages();
+
+</script>
+
+</body>
+</html>
