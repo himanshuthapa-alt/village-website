@@ -59,14 +59,14 @@
 const dehradun = { name:"Dehradun", lat:30.3165, lng:78.0322 };
 
 const villages = [
-    { name:"Herwal Gaon", lat:30.579676807995792, lng:78.473412568413, population:650 },
-    { name:"Khatt", lat:30.505077180353773, lng:78.24965191259484, population:480 },
-    { name:"Dyuli", lat:30.429175436160847, lng:78.57598879789055, population:720 },
-    { name:"Bagol", lat:30.47172300523889, lng:78.51765855407638, population:510 },
-    { name:"Pali Padyar", lat:30.311952322187143, lng:78.58876732780593, population:390 },
-    { name:"Chapoli", lat:30.2559218101527, lng:78.55298251206446, population:560 },
-    { name:"Bahera", lat:30.428266272575602, lng:78.67362654360373, population:430 },
-    { name:"Thati Dagar", lat:30.350599039699272, lng:78.70306809131556, population:600 }
+    { name:"Herwal Gaon", lat:30.579676807995792, lng:78.473412568413, population:650, block:"Pratapnagar" },
+    { name:"Khatt", lat:30.505077180353773, lng:78.24965191259484, population:480, block:"Jaunpur" },
+    { name:"Dyuli", lat:30.429175436160847, lng:78.57598879789055, population:720, block:"Narendranagar" },
+    { name:"Bagol", lat:30.47172300523889, lng:78.51765855407638, population:510, block:"Thauldhar" },
+    { name:"Pali Padyar", lat:30.311952322187143, lng:78.58876732780593, population:390, block:"Jakhnidhar" },
+    { name:"Chapoli", lat:30.2559218101527, lng:78.55298251206446, population:560, block:"Devprayag" },
+    { name:"Bahera", lat:30.428266272575602, lng:78.67362654360373, population:430, block:"Bhilangna" },
+    { name:"Thati Dagar", lat:30.350599039699272, lng:78.70306809131556, population:600, block:"Kirtinagar" }
 ];
 
 // ================= MAP =================
@@ -111,6 +111,7 @@ async function loadVillages() {
         marker.on("click", async () => {
 
             let content = `<h2>${v.name}</h2>
+                           <b>Block:</b> ${v.block}<br>
                            <b>Location:</b> ${v.lat}, ${v.lng}<br>
                            <b>Population:</b> ${v.population}<br><br>
                            <b>Calculating road distances...</b>`;
@@ -134,6 +135,7 @@ async function loadVillages() {
 
             content = `
                 <h2>${v.name}</h2>
+                <b>Block:</b> ${v.block}<br>
                 <b>Location:</b> ${v.lat}, ${v.lng}<br>
                 <b>Population:</b> ${v.population}<br><br>
                 ${distanceSection}
