@@ -38,6 +38,7 @@
     <input id="searchInput" placeholder="Search villages..." list="villagesList" />
     <datalist id="villagesList"></datalist>
     <button id="searchBtn">Go</button>
+    <span id="locStatus" style="margin-left:8px;color:var(--muted);font-size:13px"></span>
 </div>
 
 <div id="infoPanel">
@@ -52,9 +53,6 @@
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
 <script>
-// ================= DATA =================
-const dehradun = { name:"Dehradun", lat:30.3165, lng:78.0322 };
-
 const villages = [
     { name:"Herwal Gaon", lat:30.579676807995792, lng:78.473412568413, population:650, block:"Pratapnagar" },
     { name:"Khatt", lat:30.505077180353773, lng:78.24965191259484, population:480, block:"Jaunpur" },
@@ -63,7 +61,9 @@ const villages = [
     { name:"Pali Padyar", lat:30.33401280365417, lng:78.51050109519741, population:390, block:"Jakhnidhar" },
     { name:"Chapoli", lat:30.2559218101527, lng:78.55298251206446, population:560, block:"Devprayag" },
     { name:"Bahera", lat:30.40485653203958, lng:78.59353174310934, population:430, block:"Bhilangna" },
-    { name:"Thati Dagar", lat:30.23059721209478, lng:78.74200971736002, population:600, block:"Kirtinagar" }
+    { name:"Thati Dagar", lat:30.23059721209478, lng:78.74200971736002, population:600, block:"Kirtinagar" },
+    { name:"Jardhar Gaon", lat:30.3800, lng:78.4800, population:500, block:"Chamba" },
+    { name:"Jardhar Gaon", lat:30.34696062224841, lng:78.39461912718843, population:0, block:"Chamba" }
 ];
 
 // ================= MAP & TILES (MapTiler) =================
@@ -76,6 +76,8 @@ L.tileLayer('https://api.maptiler.com/maps/streets/{z}/{x}/{y}.png?key=Y9GjFPyb5
 // ================= CLUSTER & LAYERS =================
 const markersCluster = L.markerClusterGroup();
 const routeLayer = L.layerGroup().addTo(map);
+// layer for user->village route (kept separate so we clear only this)
+const userRouteLayer = L.layerGroup().addTo(map);
 map.addLayer(markersCluster);
 
 // keep references
@@ -84,7 +86,13 @@ const markersMap = new Map();
 // caches to reduce repeated OSRM calls
 const routeCache = new Map(); // key => { distance, geometry }
 
-function cacheKey(a,b){ return `${a.name}||${b.name}` }
+function cacheKey(a,b){
+    // symmetric key to avoid duplicate requests for A->B and B->A
+    const k1 = `${a.name}||${b.name}`;
+    const k2 = `${b.name}||${a.name}`;
+    // always use lexicographically smaller key first
+    return (k1 < k2) ? k1 : k2;
+}
 
 async function fetchRouteGeo(from, to){
     const key = cacheKey(from,to);
@@ -111,6 +119,8 @@ async function getRoadDistance(from,to){
 
 function clearRoutes(){ routeLayer.clearLayers() }
 
+function clearUserRoute(){ userRouteLayer.clearLayers() }
+
 function openPanel(content, title){
     document.getElementById('panelTitle').textContent = title || 'Village';
     document.getElementById('panelContent').innerHTML = content;
@@ -136,18 +146,31 @@ async function loadVillages(){
         marker.bindTooltip(v.name, {direction:'top'});
         marker.on('click', async () => {
             clearRoutes();
+            clearUserRoute();
             const loading = `<h2>${v.name}</h2><div class="meta">${v.block} • Pop: ${v.population}</div><div class="meta">${v.lat.toFixed(5)}, ${v.lng.toFixed(5)}</div><hr><div style="margin-top:8px;color:var(--muted)">Calculating road distances and routes...</div>`;
             openPanel(loading, v.name);
 
-            // fetch Dehradun route
-            const targets = [dehradun, ...villages.filter(o=>o.name!==v.name)];
+            // other villages (exclude the selected one)
+            const targets = villages.filter(o=>o.name!==v.name);
             // fetch all routes (cached) concurrently
             const promises = targets.map(t => fetchRouteGeo(v, t));
             const results = await Promise.all(promises);
 
             // build distance list
-            let distanceHTML = `<div class="distanceList"><b>Distance from Dehradun:</b> ${results[0] && isFinite(results[0].distance) ? results[0].distance.toFixed(2)+' km' : 'N/A'}<br><br><b>Other villages:</b><br>`;
-            for(let i=1;i<targets.length;i++){
+            // include user's distance if available
+            let userDistanceHTML = '';
+            if(window.userLocation){
+                const rUser = await fetchRouteGeo(window.userLocation, v);
+                userDistanceHTML = `<b>Distance from You:</b> ${rUser && isFinite(rUser.distance) ? rUser.distance.toFixed(2)+' km' : 'N/A'}<br><br>`;
+                // draw user->village route (single route visible)
+                if(rUser && rUser.geometry && rUser.geometry.coordinates){
+                    const style = { color: '#d9534f', weight: 5, opacity:0.95 };
+                    const g = L.geoJSON(rUser.geometry, { style }).bindPopup(`Route: You → ${v.name}`);
+                    userRouteLayer.addLayer(g);
+                }
+            }
+            let distanceHTML = `<div class="distanceList">${userDistanceHTML}<b>Distances to other villages:</b><br>`;
+            for(let i=0;i<targets.length;i++){
                 const other = targets[i];
                 const r = results[i];
                 distanceHTML += `${other.name}: ${r && isFinite(r.distance) ? r.distance.toFixed(2)+' km' : 'N/A'}<br>`;
@@ -160,7 +183,7 @@ async function loadVillages(){
                 if(r && r.geometry && r.geometry.coordinates){
                     const geo = r.geometry;
                     const style = { color: colors[idx % colors.length], weight: 4, opacity:0.85 };
-                    const g = L.geoJSON(geo, { style }).bindPopup(idx===0? 'Route to Dehradun' : `Route to ${targets[idx].name}`);
+                    const g = L.geoJSON(geo, { style }).bindPopup(`Route to ${targets[idx].name}`);
                     routeLayer.addLayer(g);
                 }
             });
@@ -169,8 +192,10 @@ async function loadVillages(){
             openPanel(content, v.name);
             // fit to show village + routes
             try{
-                const bounds = routeLayer.getBounds();
-                if(bounds.isValid()) map.fitBounds(bounds.pad(0.15));
+                // prefer fitting to user route if available, else existing routes
+                const ub = userRouteLayer.getBounds();
+                if(ub && ub.isValid()) map.fitBounds(ub.pad(0.15));
+                else { const bounds = routeLayer.getBounds(); if(bounds.isValid()) map.fitBounds(bounds.pad(0.15)); }
             }catch(e){}
         });
 
@@ -197,6 +222,28 @@ document.getElementById('searchInput').addEventListener('keydown', (e)=>{ if(e.k
 
 // initialize
 loadVillages();
+
+// ================= GEOLOCATION (user location) =================
+function initGeolocation(){
+    const statusEl = document.getElementById('locStatus');
+    if(!navigator.geolocation){ statusEl.textContent = 'Geolocation not supported'; return; }
+    navigator.geolocation.getCurrentPosition((pos)=>{
+        const lat = pos.coords.latitude; const lng = pos.coords.longitude;
+        window.userLocation = { name:'You', lat: lat, lng: lng };
+        // distinct marker (not clustered)
+        if(window.userMarker) window.userMarker.remove();
+        window.userMarker = L.circleMarker([lat,lng], { radius:7, color:'#d9534f', fillColor:'#ff6b6b', fillOpacity:0.95 }).addTo(map).bindPopup('You are here');
+        statusEl.textContent = '';
+    }, (err)=>{
+        if(err && err.code===1){ // PERMISSION_DENIED
+            document.getElementById('locStatus').textContent = 'Location access denied';
+        } else {
+            document.getElementById('locStatus').textContent = 'Could not get location';
+        }
+    }, { enableHighAccuracy:true, timeout:10000, maximumAge:60000 });
+}
+
+initGeolocation();
 </script>
 
 </body>
