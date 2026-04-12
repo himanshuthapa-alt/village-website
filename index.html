@@ -6,56 +6,53 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 
     <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
 
     <style>
-        body { margin:0; font-family: Arial; }
+        :root{ --panel-width: 380px; --accent: #2b7be4; --muted: #6b6b6b; --bg: #ffffff }
+        html,body{height:100%;margin:0;font-family:Inter,Arial,Helvetica,sans-serif;background:#f6f7fb}
         #map { height: 100vh; }
 
-        /* Side Panel */
-        #infoPanel {
-            position: fixed;
-            top: 0;
-            right: -400px;
-            width: 400px;
-            height: 100%;
-            background: white;
-            box-shadow: -3px 0 10px rgba(0,0,0,0.3);
-            padding: 20px;
-            overflow-y: auto;
-            transition: right 0.4s ease;
-            z-index: 1000;
-        }
+        .searchBox{ position:absolute; left:12px; top:12px; z-index:1100; background:rgba(255,255,255,0.96); padding:8px 10px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.12); display:flex; gap:8px; align-items:center; min-width:260px }
+        .searchBox input{ border:0; outline:none; font-size:14px; min-width:180px }
+        .searchBox button{ background:var(--accent); color:#fff; border:0; padding:6px 10px; border-radius:6px; cursor:pointer }
 
-        #infoPanel.active {
-            right: 0;
-        }
-
-        .closeBtn {
-            cursor: pointer;
-            color: red;
-            font-weight: bold;
-            float: right;
-        }
-
-        h2 { margin-top: 0; }
-        hr { margin: 15px 0; }
+        #infoPanel { position: fixed; top:0; right:0; transform:translateX(100%); width:var(--panel-width); height:100%; background:var(--bg); box-shadow:-8px 0 24px rgba(16,24,40,0.12); padding:18px; overflow-y:auto; transition: transform 0.36s cubic-bezier(.2,.9,.2,1); z-index:1200; border-left:1px solid #eef2f6 }
+        #infoPanel.active{ transform:translateX(0) }
+        .panelHeader{ display:flex; align-items:center; gap:8px; margin-bottom:8px }
+        .closeBtn{ cursor:pointer; color:var(--muted); font-weight:600; border:0; background:none; font-size:16px }
+        h2{ margin:0; font-size:18px }
+        .panelBody{ margin-top:12px; color:#222 }
+        .meta{ color:var(--muted); font-size:13px; margin-top:8px }
+        .distanceList{ margin-top:12px; font-size:14px; line-height:1.45 }
+        .sources{ margin-top:14px; font-size:13px; color:var(--muted) }
+        hr{ border:0; height:1px; background:#eef2f6; margin:12px 0 }
     </style>
 </head>
 <body>
 
 <div id="map"></div>
 
+<div class="searchBox" id="searchBox">
+    <input id="searchInput" placeholder="Search villages..." list="villagesList" />
+    <datalist id="villagesList"></datalist>
+    <button id="searchBtn">Go</button>
+</div>
+
 <div id="infoPanel">
-    <span class="closeBtn" onclick="closePanel()">X</span>
-    <div id="panelContent"></div>
+    <div class="panelHeader">
+        <h2 id="panelTitle">Village</h2>
+        <button class="closeBtn" onclick="closePanel()">✕</button>
+    </div>
+    <div id="panelContent" class="panelBody"></div>
 </div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
 <script>
-
 // ================= DATA =================
-
 const dehradun = { name:"Dehradun", lat:30.3165, lng:78.0322 };
 
 const villages = [
@@ -66,94 +63,140 @@ const villages = [
     { name:"Pali Padyar", lat:30.33401280365417, lng:78.51050109519741, population:390, block:"Jakhnidhar" },
     { name:"Chapoli", lat:30.2559218101527, lng:78.55298251206446, population:560, block:"Devprayag" },
     { name:"Bahera", lat:30.40485653203958, lng:78.59353174310934, population:430, block:"Bhilangna" },
-    { name:"Thati Dagar", lat:30.215514727148868, lng:78.7483587631176, population:600, block:"Kirtinagar" }
+    { name:"Thati Dagar", lat:30.23059721209478, lng:78.74200971736002, population:600, block:"Kirtinagar" }
 ];
 
-// ================= MAP =================
-
+// ================= MAP & TILES (MapTiler) =================
 const map = L.map('map').setView([30.4, 78.5], 9);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap'
+L.tileLayer('https://api.maptiler.com/maps/streets/{z}/{x}/{y}.png?key=Y9GjFPyb5vKJDnS0Sy12', {
+    attribution: '© MapTiler © OpenStreetMap contributors'
 }).addTo(map);
 
-// ================= ROUTING FUNCTION =================
+// ================= CLUSTER & LAYERS =================
+const markersCluster = L.markerClusterGroup();
+const routeLayer = L.layerGroup().addTo(map);
+map.addLayer(markersCluster);
 
-async function getRoadDistance(from, to) {
-    const url = `https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=false`;
-    const res = await fetch(url);
-    const data = await res.json();
-    if (data.routes.length > 0) {
-        return (data.routes[0].distance / 1000).toFixed(2);
+// keep references
+const markersMap = new Map();
+
+// caches to reduce repeated OSRM calls
+const routeCache = new Map(); // key => { distance, geometry }
+
+function cacheKey(a,b){ return `${a.name}||${b.name}` }
+
+async function fetchRouteGeo(from, to){
+    const key = cacheKey(from,to);
+    if(routeCache.has(key)) return routeCache.get(key);
+    try{
+        const url = `https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if(data && data.routes && data.routes.length>0){
+            const r = { distance: data.routes[0].distance/1000, geometry: data.routes[0].geometry };
+            routeCache.set(key, r);
+            return r;
+        }
+    }catch(e){ console.warn('OSRM error', e) }
+    const fallback = { distance: NaN, geometry: null };
+    routeCache.set(key, fallback);
+    return fallback;
+}
+
+async function getRoadDistance(from,to){
+    const r = await fetchRouteGeo(from,to);
+    return isFinite(r.distance) ? r.distance.toFixed(2) : 'N/A';
+}
+
+function clearRoutes(){ routeLayer.clearLayers() }
+
+function openPanel(content, title){
+    document.getElementById('panelTitle').textContent = title || 'Village';
+    document.getElementById('panelContent').innerHTML = content;
+    document.getElementById('infoPanel').classList.add('active');
+}
+
+function closePanel(){ document.getElementById('infoPanel').classList.remove('active'); clearRoutes(); }
+
+// populate datalist for search
+function populateSearch(){
+    const list = document.getElementById('villagesList');
+    list.innerHTML = '';
+    for(const v of villages){
+        const opt = document.createElement('option'); opt.value = v.name; list.appendChild(opt);
     }
-    return "N/A";
 }
 
-// ================= PANEL CONTROL =================
+// ================= LOAD MARKERS =================
+async function loadVillages(){
+    populateSearch();
+    for(const v of villages){
+        const marker = L.marker([v.lat, v.lng]);
+        marker.bindTooltip(v.name, {direction:'top'});
+        marker.on('click', async () => {
+            clearRoutes();
+            const loading = `<h2>${v.name}</h2><div class="meta">${v.block} • Pop: ${v.population}</div><div class="meta">${v.lat.toFixed(5)}, ${v.lng.toFixed(5)}</div><hr><div style="margin-top:8px;color:var(--muted)">Calculating road distances and routes...</div>`;
+            openPanel(loading, v.name);
 
-function openPanel(content) {
-    document.getElementById("panelContent").innerHTML = content;
-    document.getElementById("infoPanel").classList.add("active");
-}
+            // fetch Dehradun route
+            const targets = [dehradun, ...villages.filter(o=>o.name!==v.name)];
+            // fetch all routes (cached) concurrently
+            const promises = targets.map(t => fetchRouteGeo(v, t));
+            const results = await Promise.all(promises);
 
-function closePanel() {
-    document.getElementById("infoPanel").classList.remove("active");
-}
-
-// ================= LOAD DATA =================
-
-async function loadVillages() {
-
-    for (let v of villages) {
-
-        const marker = L.marker([v.lat, v.lng]).addTo(map);
-
-        marker.on("click", async () => {
-
-            let content = `<h2>${v.name}</h2>
-                           <b>Block:</b> ${v.block}<br>
-                           <b>Location:</b> ${v.lat}, ${v.lng}<br>
-                           <b>Population:</b> ${v.population}<br><br>
-                           <b>Calculating road distances...</b>`;
-
-            openPanel(content);
-
-            // Distance from Dehradun
-            let distDehradun = await getRoadDistance(dehradun, v);
-
-            let distanceSection = `
-                <b>Distance from Dehradun:</b> ${distDehradun} km<br><br>
-                <b>Distance from Other Villages:</b><br>
-            `;
-
-            for (let other of villages) {
-                if (other.name !== v.name) {
-                    let dist = await getRoadDistance(v, other);
-                    distanceSection += `${other.name}: ${dist} km<br>`;
-                }
+            // build distance list
+            let distanceHTML = `<div class="distanceList"><b>Distance from Dehradun:</b> ${results[0] && isFinite(results[0].distance) ? results[0].distance.toFixed(2)+' km' : 'N/A'}<br><br><b>Other villages:</b><br>`;
+            for(let i=1;i<targets.length;i++){
+                const other = targets[i];
+                const r = results[i];
+                distanceHTML += `${other.name}: ${r && isFinite(r.distance) ? r.distance.toFixed(2)+' km' : 'N/A'}<br>`;
             }
+            distanceHTML += `</div>`;
 
-            content = `
-                <h2>${v.name}</h2>
-                <b>Block:</b> ${v.block}<br>
-                <b>Location:</b> ${v.lat}, ${v.lng}<br>
-                <b>Population:</b> ${v.population}<br><br>
-                ${distanceSection}
-                <hr>
-                <h3>Sources</h3>
-                Census of India 2011<br>
-                OpenStreetMap<br>
-                OSRM Routing API<br>
-                <a href="https://www.census2011.co.in/" target="_blank">Census Data Link</a>
-            `;
+            // draw routes with simple color ramp
+            const colors = ['#2b7be4','#f28f3b','#3fb27f','#8e44ad','#d94f6a','#00a3ff'];
+            results.forEach((r, idx) => {
+                if(r && r.geometry && r.geometry.coordinates){
+                    const geo = r.geometry;
+                    const style = { color: colors[idx % colors.length], weight: 4, opacity:0.85 };
+                    const g = L.geoJSON(geo, { style }).bindPopup(idx===0? 'Route to Dehradun' : `Route to ${targets[idx].name}`);
+                    routeLayer.addLayer(g);
+                }
+            });
 
-            openPanel(content);
+            const content = `<h2>${v.name}</h2><div class="meta">${v.block} • Population: ${v.population}</div><div class="meta">Location: ${v.lat.toFixed(5)}, ${v.lng.toFixed(5)}</div>${distanceHTML}<hr><div class="sources">Sources: Census of India 2011 · OpenStreetMap · OSRM Routing API<br><a href="https://www.census2011.co.in/" target="_blank">Census Data</a></div>`;
+            openPanel(content, v.name);
+            // fit to show village + routes
+            try{
+                const bounds = routeLayer.getBounds();
+                if(bounds.isValid()) map.fitBounds(bounds.pad(0.15));
+            }catch(e){}
         });
+
+        markersMap.set(v.name, marker);
+        markersCluster.addLayer(marker);
     }
 }
 
-loadVillages();
+// search handling
+document.getElementById('searchBtn').addEventListener('click', ()=>{
+    const val = document.getElementById('searchInput').value.trim();
+    if(!val) return;
+    const v = villages.find(x => x.name.toLowerCase() === val.toLowerCase()) || villages.find(x => x.name.toLowerCase().includes(val.toLowerCase()));
+    if(v){
+        const m = markersMap.get(v.name);
+        if(m){ map.setView([v.lat,v.lng], 13, { animate:true }); m.openPopup && m.openPopup(); m.fire && m.fire('click'); }
+    } else {
+        alert('No village found');
+    }
+});
 
+// allow Enter key on search input
+document.getElementById('searchInput').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ document.getElementById('searchBtn').click(); } });
+
+// initialize
+loadVillages();
 </script>
 
 </body>
